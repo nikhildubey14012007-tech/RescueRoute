@@ -1,0 +1,110 @@
+import cv2
+from ultralytics import YOLO
+
+# Load trained ambulance detection model
+model = YOLO("best.pt")
+
+# Print model information
+print(f"Model classes: {model.names}")
+print("Model loaded successfully\n")
+
+# quick sanity check on a static file if one exists
+import os
+sample_path = "sample_ambulance.jpg"
+if os.path.exists(sample_path):
+    print(f"Running sample inference on {sample_path}")
+    sample = cv2.imread(sample_path)
+    res = model.predict(sample, conf=0.1)
+    print("Sample results:", res)
+else:
+    print(f"No sample image found at {sample_path}, skipping static test")
+
+# Try to find available camera
+cap = None
+for camera_index in range(5):  # Try first 5 camera indices
+    cap = cv2.VideoCapture(camera_index)
+    if cap.isOpened():
+        print(f"Camera found at index: {camera_index}")
+        break
+    else:
+        cap.release()
+# if you want to test with a static screen capture instead of camera,
+# uncomment the following lines and comment out the camera loop above:
+# cap = None
+# frame = cv2.imread(sample_path)  # reuse sample image variable
+# if frame is None:
+#     print("could not load sample image for offline test")
+#     exit()
+# ret = True
+# def read_frame():
+#     global ret
+#     return ret, frame
+
+
+if cap is None or not cap.isOpened():
+    print("ERROR: No camera found!")
+    print("Options:")
+    print("1. Check if camera is connected")
+    print("2. Check if another app is using the camera")
+    print("3. Check camera drivers")
+    exit()
+
+# Set camera properties for better performance
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FPS, 30)
+
+frame_count = 0
+
+while True:
+    ret, frame = cap.read()
+    
+    if not ret:
+        print("ERROR: Cannot read frame from camera")
+        break
+    
+    frame_count += 1
+    
+    # Run AI model detection on the frame with very low confidence
+    results = model.predict(frame, conf=0.1, verbose=False)
+    
+    ambulance_detected = False
+    detected_classes = []
+    
+    # Check all detections
+    for r in results:
+        for box in r.boxes:
+            class_id = int(box.cls)
+            confidence = float(box.conf)
+            class_name = model.names[class_id]
+            
+            detected_classes.append((class_name, confidence))
+            
+            # Draw ALL detections
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, f"{class_name}: {confidence:.2f}", (x1, y1 - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+            # Check for ambulance (class name might vary)
+            if "ambulance" in class_name.lower():
+                ambulance_detected = True
+    
+    # Print detections every 10 frames
+    if frame_count % 10 == 0:
+        if detected_classes:
+            print(f"Frame {frame_count} - Detected: {detected_classes}")
+        else:
+            print(f"Frame {frame_count} - No objects detected")
+    
+    if ambulance_detected:
+        print(">>> AMBULANCE DETECTED <<<")
+    
+    cv2.imshow("Camera Feed - Press ESC to exit", frame)
+    
+    if cv2.waitKey(1) == 27:  # ESC key
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+print("Camera closed successfully")
